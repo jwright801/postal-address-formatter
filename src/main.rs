@@ -42,7 +42,7 @@ fn main() -> ExitCode {
 
 fn print_usage() {
     eprintln!(
-        "addrfmt: read a US postal address from stdin, validate it, print it back\n\
+        "addrfmt: read a US or Canadian postal address from stdin, validate it, print it back\n\
          \n\
          usage:\n\
          \x20\x20cat address.txt | addrfmt [--json]\n\
@@ -53,8 +53,14 @@ fn print_usage() {
          \x20\x20Suite 210\n\
          \x20\x20San Francisco, CA 94105\n\
          \n\
-         the recipient and unit lines are optional. with --json the result\n\
-         (or the error) is printed as a single JSON object instead of the\n\
-         human-readable, re-formatted address."
+         or, for a Canadian address:\n\
+         \x20\x20100 Queen St W\n\
+         \x20\x20Toronto, ON M5H 2N2\n\
+         \n\
+         the country is inferred from the two-letter region code on the\n\
+         last line (a US state or a Canadian province). the recipient and\n\
+         unit lines are optional. with --json the result (or the error) is\n\
+         printed as a single JSON object instead of the human-readable,\n\
+         re-formatted address."
     );
 }

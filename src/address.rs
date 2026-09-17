@@ -1,18 +1,17 @@
 use crate::json;
 use std::fmt;
 
-/// Only US addresses are understood right now. This is its own type,
-/// rather than a bare string, so the day a second country lands the
-/// compiler finds every place that assumed there was only one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Country {
     Us,
+    Ca,
 }
 
 impl Country {
     pub fn code(&self) -> &'static str {
         match self {
             Country::Us => "US",
+            Country::Ca => "CA",
         }
     }
 }
