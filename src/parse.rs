@@ -6,6 +6,7 @@ use std::fmt;
 pub enum ParseError {
     TooFewLines,
     InvalidCityLine(String),
+    InvalidUkLine(String),
     UnrecognizedRegion(String),
     InvalidUsZip(String),
     InvalidCaPostalCode(String),
@@ -20,6 +21,9 @@ impl fmt::Display for ParseError {
             ),
             ParseError::InvalidCityLine(line) => {
                 write!(f, "could not read '{line}' as 'City, ST ZIP'")
+            }
+            ParseError::InvalidUkLine(line) => {
+                write!(f, "could not read '{line}' as 'Post Town POSTCODE'")
             }
             ParseError::UnrecognizedRegion(region) => write!(
                 f,
@@ -51,10 +55,11 @@ const CA_PROVINCES: &[&str] = &[
 /// Letters Canada Post never uses as the first character of a postal code.
 const CA_POSTAL_EXCLUDED_FIRST: &[char] = &['D', 'F', 'I', 'O', 'Q', 'U'];
 
-/// Parses a free-form US or Canadian address: an optional recipient line,
-/// one street line, an optional unit line, and a trailing
-/// "City, Region Postal" line. The region code on that last line decides
-/// which country's postal code and formatting rules apply.
+/// Parses a free-form US, Canadian, or UK address: an optional recipient
+/// line, one street line, an optional unit line, and a trailing line that
+/// is either "City, Region Postal" (US/CA) or "Post Town Postcode" (UK,
+/// no comma). Which shape the last line has decides which country's
+/// postal code and formatting rules apply.
 pub fn parse(input: &str) -> Result<Address, ParseError> {
     let lines: Vec<&str> = input
         .lines()
@@ -67,14 +72,19 @@ pub fn parse(input: &str) -> Result<Address, ParseError> {
     }
 
     let (last, rest) = lines.split_last().expect("checked len >= 2 above");
-    let (city, region, postal_raw) = split_city_line(last)?;
 
-    let (country, postal_code) = if US_STATES.contains(&region.as_str()) {
-        (Country::Us, validate_us_zip(&postal_raw)?)
-    } else if CA_PROVINCES.contains(&region.as_str()) {
-        (Country::Ca, validate_ca_postal_code(&postal_raw)?)
+    let (country, city, region, postal_code) = if last.contains(',') {
+        let (city, region, postal_raw) = split_city_line(last)?;
+        if US_STATES.contains(&region.as_str()) {
+            (Country::Us, city, Some(region), validate_us_zip(&postal_raw)?)
+        } else if CA_PROVINCES.contains(&region.as_str()) {
+            (Country::Ca, city, Some(region), validate_ca_postal_code(&postal_raw)?)
+        } else {
+            return Err(ParseError::UnrecognizedRegion(region));
+        }
     } else {
-        return Err(ParseError::UnrecognizedRegion(region));
+        let (post_town, postal_code) = parse_uk_line(last)?;
+        (Country::Gb, post_town, None, postal_code)
     };
 
     let (recipient, street, unit) = match rest.len() {
@@ -167,5 +177,82 @@ fn validate_ca_postal_code(raw: &str) -> Result<String, ParseError> {
     Ok(format!(
         "{}{}{} {}{}{}",
         compact[0], compact[1], compact[2], compact[3], compact[4], compact[5]
+    ))
+}
+
+/// Splits a UK last line into post town and postcode. Unlike the US/CA
+/// line there's no comma to anchor on, so the postcode is found by
+/// testing the last one or two whitespace-separated tokens (people write
+/// it both as "SW1A 1AA" and "SW1A1AA") and treating whatever remains as
+/// the post town.
+fn parse_uk_line(line: &str) -> Result<(String, String), ParseError> {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+
+    if tokens.len() >= 3 {
+        let candidate = format!("{}{}", tokens[tokens.len() - 2], tokens[tokens.len() - 1]);
+        if let Some(postcode) = validate_uk_postcode(&candidate) {
+            return Ok((tokens[..tokens.len() - 2].join(" "), postcode));
+        }
+    }
+    if tokens.len() >= 2 {
+        if let Some(postcode) = validate_uk_postcode(tokens[tokens.len() - 1]) {
+            return Ok((tokens[..tokens.len() - 1].join(" "), postcode));
+        }
+    }
+
+    Err(ParseError::InvalidUkLine(line.to_string()))
+}
+
+/// Validates a UK postcode and normalizes it to "OUTWARD INWARD" (e.g.
+/// `SW1A 1AA`), accepting it with or without the space and in either
+/// letter case. This checks the shape Royal Mail documents (outward code
+/// of 2-4 characters, inward code always digit+letter+letter), plus the
+/// long-standing special case for Girobank's `GIR 0AA`. It does not
+/// check the outward code against the real list of assigned postal
+/// areas.
+fn validate_uk_postcode(raw: &str) -> Option<String> {
+    let compact: Vec<char> = raw
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_uppercase)
+        .collect();
+
+    if compact == ['G', 'I', 'R', '0', 'A', 'A'] {
+        return Some("GIR 0AA".to_string());
+    }
+
+    if !(5..=7).contains(&compact.len()) {
+        return None;
+    }
+    let (outward, inward) = compact.split_at(compact.len() - 3);
+
+    let is_letter = |c: char| c.is_ascii_alphabetic();
+    let is_digit = |c: char| c.is_ascii_digit();
+
+    let inward_ok = is_digit(inward[0]) && is_letter(inward[1]) && is_letter(inward[2]);
+    let outward_ok = match outward.len() {
+        2 => is_letter(outward[0]) && is_digit(outward[1]),
+        3 => {
+            is_letter(outward[0])
+                && ((is_digit(outward[1]) && is_digit(outward[2]))
+                    || (is_letter(outward[1]) && is_digit(outward[2]))
+                    || (is_digit(outward[1]) && is_letter(outward[2])))
+        }
+        4 => {
+            is_letter(outward[0])
+                && is_letter(outward[1])
+                && is_digit(outward[2])
+                && (is_digit(outward[3]) || is_letter(outward[3]))
+        }
+        _ => false,
+    };
+    if !inward_ok || !outward_ok {
+        return None;
+    }
+
+    Some(format!(
+        "{} {}",
+        outward.iter().collect::<String>(),
+        inward.iter().collect::<String>()
     ))
 }

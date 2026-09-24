@@ -5,6 +5,7 @@ use std::fmt;
 pub enum Country {
     Us,
     Ca,
+    Gb,
 }
 
 impl Country {
@@ -12,6 +13,7 @@ impl Country {
         match self {
             Country::Us => "US",
             Country::Ca => "CA",
+            Country::Gb => "GB",
         }
     }
 }
@@ -28,7 +30,9 @@ pub struct Address {
     pub street: String,
     pub unit: Option<String>,
     pub city: String,
-    pub region: String,
+    /// The state or province code. UK addresses have no equivalent field -
+    /// the post town on the last line stands alone next to the postcode.
+    pub region: Option<String>,
     pub postal_code: String,
     pub country: Country,
 }
@@ -45,7 +49,10 @@ impl Address {
         if let Some(unit) = &self.unit {
             lines.push(unit.clone());
         }
-        lines.push(format!("{}, {} {}", self.city, self.region, self.postal_code));
+        lines.push(match &self.region {
+            Some(region) => format!("{}, {} {}", self.city, region, self.postal_code),
+            None => format!("{} {}", self.city, self.postal_code),
+        });
         lines.join("\n")
     }
 
@@ -56,7 +63,7 @@ impl Address {
             json::string(&self.street),
             json::nullable_string(&self.unit),
             json::string(&self.city),
-            json::string(&self.region),
+            json::nullable_string(&self.region),
             json::string(&self.postal_code),
             json::string(self.country.code()),
         )

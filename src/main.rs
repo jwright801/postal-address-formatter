@@ -42,7 +42,8 @@ fn main() -> ExitCode {
 
 fn print_usage() {
     eprintln!(
-        "addrfmt: read a US or Canadian postal address from stdin, validate it, print it back\n\
+        "addrfmt: read a US, Canadian, or UK postal address from stdin, validate it,\n\
+         print it back\n\
          \n\
          usage:\n\
          \x20\x20cat address.txt | addrfmt [--json]\n\
@@ -57,10 +58,16 @@ fn print_usage() {
          \x20\x20100 Queen St W\n\
          \x20\x20Toronto, ON M5H 2N2\n\
          \n\
-         the country is inferred from the two-letter region code on the\n\
-         last line (a US state or a Canadian province). the recipient and\n\
-         unit lines are optional. with --json the result (or the error) is\n\
-         printed as a single JSON object instead of the human-readable,\n\
-         re-formatted address."
+         or, for a UK address:\n\
+         \x20\x20221B Baker Street\n\
+         \x20\x20London NW1 6XE\n\
+         \n\
+         for US and Canada, the country is inferred from the two-letter\n\
+         region code on the last line (a US state or a Canadian province).\n\
+         a UK address has no region code, so its last line is just the\n\
+         post town and postcode with no comma, and that shape is what\n\
+         picks the UK. the recipient and unit lines are optional. with\n\
+         --json the result (or the error) is printed as a single JSON\n\
+         object instead of the human-readable, re-formatted address."
     );
 }
