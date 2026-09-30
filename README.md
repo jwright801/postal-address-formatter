@@ -89,6 +89,15 @@ Standard library only, nothing to fetch:
 $ cargo build --release
 ```
 
+## Tests
+
+```
+$ cargo test
+```
+
+The parser's unit tests live at the bottom of `src/parse.rs` and cover
+line layout, each country's postal code rules, and the error cases.
+
 ## Scope
 
 - US, Canadian, and UK addresses are parsed today. US state codes are checked
@@ -115,6 +124,5 @@ $ cargo build --release
 ## Roadmap
 
 - multi-line street addresses (PO boxes, floor/building lines)
-- a test suite covering parser edge cases
 - a `--strict` flag for tighter validation (e.g. rejecting PO boxes)
 - reading an address from a file argument instead of only stdin

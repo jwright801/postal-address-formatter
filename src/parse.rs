@@ -256,3 +256,224 @@ fn validate_uk_postcode(raw: &str) -> Option<String> {
         inward.iter().collect::<String>()
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ok(input: &str) -> Address {
+        parse(input).unwrap_or_else(|e| panic!("expected {input:?} to parse, got: {e}"))
+    }
+
+    fn err(input: &str) -> ParseError {
+        parse(input).expect_err("expected a parse error")
+    }
+
+    #[test]
+    fn us_address_with_all_lines() {
+        let a = ok("Jane Doe\n500 Market St\nSuite 210\nSan Francisco, CA 94105\n");
+        assert_eq!(a.recipient.as_deref(), Some("Jane Doe"));
+        assert_eq!(a.street, "500 Market St");
+        assert_eq!(a.unit.as_deref(), Some("Suite 210"));
+        assert_eq!(a.city, "San Francisco");
+        assert_eq!(a.region.as_deref(), Some("CA"));
+        assert_eq!(a.postal_code, "94105");
+        assert_eq!(a.country, Country::Us);
+    }
+
+    #[test]
+    fn street_and_city_line_only() {
+        let a = ok("500 Market St\nSan Francisco, CA 94105");
+        assert_eq!(a.recipient, None);
+        assert_eq!(a.unit, None);
+        assert_eq!(a.street, "500 Market St");
+    }
+
+    #[test]
+    fn two_lines_before_city_are_street_and_unit() {
+        let a = ok("500 Market St\nPO Box 12\nSan Francisco, CA 94105");
+        assert_eq!(a.recipient, None);
+        assert_eq!(a.street, "500 Market St");
+        assert_eq!(a.unit.as_deref(), Some("PO Box 12"));
+    }
+
+    #[test]
+    fn extra_lines_are_folded_into_unit() {
+        let a = ok("Jane Doe\n500 Congress Ave\nFloor 3\nBuilding B\nAustin, TX 78701");
+        assert_eq!(a.recipient.as_deref(), Some("Jane Doe"));
+        assert_eq!(a.street, "500 Congress Ave");
+        assert_eq!(a.unit.as_deref(), Some("Floor 3, Building B"));
+    }
+
+    #[test]
+    fn blank_lines_and_padding_are_ignored() {
+        let a = ok("\n  500 Market St  \n\n  San Francisco,  CA   94105  \n\n");
+        assert_eq!(a.street, "500 Market St");
+        assert_eq!(a.city, "San Francisco");
+        assert_eq!(a.postal_code, "94105");
+    }
+
+    #[test]
+    fn too_few_lines() {
+        assert_eq!(err(""), ParseError::TooFewLines);
+        assert_eq!(err("\n  \n"), ParseError::TooFewLines);
+        assert_eq!(err("San Francisco, CA 94105"), ParseError::TooFewLines);
+    }
+
+    #[test]
+    fn region_is_uppercased() {
+        assert_eq!(ok("1 Main St\nDenver, co 80202").region.as_deref(), Some("CO"));
+    }
+
+    #[test]
+    fn dc_is_a_valid_region() {
+        let a = ok("1600 Pennsylvania Ave NW\nWashington, DC 20500");
+        assert_eq!(a.country, Country::Us);
+    }
+
+    #[test]
+    fn city_containing_a_comma_keeps_it() {
+        let a = ok("1 Main St\nWinston, Salem, NC 27101");
+        assert_eq!(a.city, "Winston, Salem");
+        assert_eq!(a.region.as_deref(), Some("NC"));
+    }
+
+    #[test]
+    fn zip_plus_four_is_accepted() {
+        assert_eq!(ok("1 Main St\nDenver, CO 80202-1234").postal_code, "80202-1234");
+    }
+
+    #[test]
+    fn bad_zips_are_rejected() {
+        for zip in ["9410", "941055", "9410a", "94105-12", "94105 1234", "94105_1234"] {
+            let input = format!("1 Main St\nDenver, CO {zip}");
+            assert!(
+                matches!(err(&input), ParseError::InvalidUsZip(_)),
+                "{zip} should be rejected as a ZIP"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_region_is_reported_uppercased() {
+        assert_eq!(
+            err("1 Main St\nDenver, zz 80202"),
+            ParseError::UnrecognizedRegion("ZZ".to_string())
+        );
+    }
+
+    #[test]
+    fn city_line_missing_pieces() {
+        assert!(matches!(
+            err("1 Main St\nDenver, CO"),
+            ParseError::InvalidCityLine(_)
+        ));
+        assert!(matches!(
+            err("1 Main St\nDenver,"),
+            ParseError::InvalidCityLine(_)
+        ));
+    }
+
+    #[test]
+    fn canadian_postal_code_is_normalized() {
+        for raw in ["M5H 2N2", "m5h2n2", "M5H  2n2"] {
+            let a = ok(&format!("100 Queen St W\nToronto, ON {raw}"));
+            assert_eq!(a.country, Country::Ca);
+            assert_eq!(a.postal_code, "M5H 2N2");
+        }
+    }
+
+    #[test]
+    fn bad_canadian_postal_codes_are_rejected() {
+        // D is never a valid first letter; the rest are wrong shape or length.
+        for code in ["D5H 2N2", "M5H 2N", "5MH 2N2", "M5H 2N22", "MMH 2N2"] {
+            let input = format!("100 Queen St W\nToronto, ON {code}");
+            assert_eq!(
+                err(&input),
+                ParseError::InvalidCaPostalCode(code.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn us_zip_is_not_accepted_for_a_province() {
+        assert!(matches!(
+            err("100 Queen St W\nToronto, ON 94105"),
+            ParseError::InvalidCaPostalCode(_)
+        ));
+    }
+
+    #[test]
+    fn uk_address_splits_town_and_postcode() {
+        let a = ok("221B Baker Street\nLondon NW1 6XE");
+        assert_eq!(a.country, Country::Gb);
+        assert_eq!(a.city, "London");
+        assert_eq!(a.region, None);
+        assert_eq!(a.postal_code, "NW1 6XE");
+    }
+
+    #[test]
+    fn uk_postcode_without_space_or_in_lowercase() {
+        assert_eq!(ok("1 High St\nLondon nw16xe").postal_code, "NW1 6XE");
+        assert_eq!(ok("1 High St\nLondon SW1A1AA").postal_code, "SW1A 1AA");
+    }
+
+    #[test]
+    fn uk_multi_word_post_town() {
+        let a = ok("1 High St\nStoke on Trent ST4 1AA");
+        assert_eq!(a.city, "Stoke on Trent");
+        assert_eq!(a.postal_code, "ST4 1AA");
+    }
+
+    #[test]
+    fn uk_outward_code_shapes() {
+        for (raw, expected) in [
+            ("M1 1AE", "M1 1AE"),
+            ("B33 8TH", "B33 8TH"),
+            ("CR2 6XH", "CR2 6XH"),
+            ("DN55 1PT", "DN55 1PT"),
+            ("W1A 0AX", "W1A 0AX"),
+            ("EC1A 1BB", "EC1A 1BB"),
+        ] {
+            assert_eq!(ok(&format!("1 High St\nTown {raw}")).postal_code, expected);
+        }
+    }
+
+    #[test]
+    fn girobank_postcode_is_special_cased() {
+        assert_eq!(ok("1 High St\nBootle GIR 0AA").postal_code, "GIR 0AA");
+    }
+
+    #[test]
+    fn bad_uk_last_lines_are_rejected() {
+        for line in ["London", "London NW1", "London NW1 6X", "London 12345", "NW1 6XE 7"] {
+            let input = format!("1 High St\n{line}");
+            assert_eq!(err(&input), ParseError::InvalidUkLine(line.to_string()));
+        }
+    }
+
+    #[test]
+    fn uk_postcode_after_a_comma_is_not_a_region() {
+        assert_eq!(
+            err("1 High St\nLondon, NW1 6XE"),
+            ParseError::UnrecognizedRegion("NW1".to_string())
+        );
+    }
+
+    #[test]
+    fn pretty_print_round_trips() {
+        for input in [
+            "Jane Doe\n500 Market St\nSuite 210\nSan Francisco, CA 94105",
+            "100 Queen St W\nToronto, ON M5H 2N2",
+            "221B Baker Street\nLondon NW1 6XE",
+        ] {
+            assert_eq!(ok(input).pretty_print(), input);
+        }
+    }
+
+    #[test]
+    fn error_messages_name_the_offending_input() {
+        let msg = err("1 Main St\nDenver, CO 1234").to_string();
+        assert!(msg.contains("'1234'"), "unexpected message: {msg}");
+    }
+}
